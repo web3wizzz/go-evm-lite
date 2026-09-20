@@ -1,13 +1,11 @@
 package main
 
 import (
-		"fmt"
-		"evm-lite/vm"
+	"evm-lite/vm"
+	"fmt"
 )
 
 func main() {
-
-	fmt.Println("⚡ go-evm-lite initialized in Codespaces!")
+	fmt.Println("⚡ evm-lite initialized in Codespaces!")
 	_ = vm.EVM{}
-
 }
