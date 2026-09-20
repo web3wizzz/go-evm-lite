@@ -6,6 +6,6 @@ import (
 )
 
 func main() {
-	fmt.Println("⚡ evm-lite initialized in Codespaces!")
+	fmt.Println("⚡ go evm-lite is active!")
 	_ = vm.EVM{}
 }
