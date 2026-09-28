@@ -19,10 +19,13 @@ type ExtensionNode struct {
 	Child Node
 }
 
+// ChildrenNode stores the 16 child nodes addressed by nibbles 0-f.
+type ChildrenNode [16]Node
+
 // BranchNode stores 16 children (0-f) + 1 optional value slot
 type BranchNode struct {
-	Children [16]Node
-	Value    []byte
+	ChildrenNode
+	Value []byte
 }
 
 // BytesToNibbles converts a byte slice into a slice of 4-bit nibbles.
