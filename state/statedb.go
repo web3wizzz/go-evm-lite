@@ -1,21 +1,23 @@
+
 package state
 
 import (
+	"bytes"
 	"fmt"
 	"math/big"
-
-	"evm-lite/crypto"
 )
 
-// StateDB manages account states using an underlying Merkle Patricia Trie
+// StateDB manages account states and contract storage tries
 type StateDB struct {
-	trie *Trie
+	trie         *Trie
+	storageTries map[string]*Trie
 }
 
-// NewStateDB initializes a new StateDB with an empty MPT
+// NewStateDB initializes a new StateDB with empty state and storage tries
 func NewStateDB() *StateDB {
 	return &StateDB{
-		trie: NewTrie(),
+		trie:         NewTrie(),
+		storageTries: make(map[string]*Trie),
 	}
 }
 
@@ -80,66 +82,57 @@ func (s *StateDB) SetNonce(addr []byte, nonce uint64) error {
 	return s.SetAccount(addr, acc)
 }
 
-// Helper: EncodeAccount serializes an Account struct into an RLP-encoded state tuple.
-func EncodeAccount(acc *Account) ([]byte, error) {
-	if acc == nil {
-		return nil, fmt.Errorf("account is nil")
+// GetState retrieves a 32-byte storage value from an account's storage trie
+func (s *StateDB) GetState(addr, key []byte) []byte {
+	st, ok := s.storageTries[string(addr)]
+	if !ok {
+		return make([]byte, 32)
 	}
-
-	balance := new(big.Int)
-	if acc.Balance != nil {
-		balance = new(big.Int).Set(acc.Balance)
+	val, err := st.Get(key)
+	if err != nil {
+		return make([]byte, 32)
 	}
-
-	storageRoot := append([]byte(nil), acc.StorageRoot...)
-	if len(storageRoot) == 0 {
-		storageRoot = append([]byte(nil), EmptyRootHash...)
-	}
-
-	codeHash := append([]byte(nil), acc.CodeHash...)
-	if len(codeHash) == 0 {
-		codeHash = append([]byte(nil), EmptyCodeHash...)
-	}
-
-	items := [][]byte{
-		crypto.EncodeUint(acc.Nonce),
-		crypto.EncodeBytes(balance.Bytes()),
-		crypto.EncodeBytes(storageRoot),
-		crypto.EncodeBytes(codeHash),
-	}
-
-	return crypto.EncodeList(items), nil
+	return val
 }
 
-// Helper: DecodeAccount reconstructs an Account struct from the RLP-encoded state tuple.
-func DecodeAccount(data []byte) (*Account, error) {
-	items, _, err := crypto.DecodeList(data)
-	if err != nil {
-		return nil, fmt.Errorf("invalid account data: %w", err)
+// SetState sets a 32-byte storage value in an account's storage trie
+func (s *StateDB) SetState(addr, key, value []byte) error {
+	st, ok := s.storageTries[string(addr)]
+	if !ok {
+		st = NewTrie()
+		s.storageTries[string(addr)] = st
 	}
-	if len(items) != 4 {
+	st.Put(key, value)
+
+	acc, err := s.GetAccount(addr)
+	if err != nil {
+		acc = NewAccount(0, new(big.Int))
+	}
+	return s.SetAccount(addr, acc)
+}
+
+// Helper: EncodeAccount serializes an Account struct into raw bytes
+func EncodeAccount(acc *Account) ([]byte, error) {
+	var buf bytes.Buffer
+	buf.Write(big.NewInt(int64(acc.Nonce)).Bytes())
+	buf.Write(acc.Balance.Bytes())
+	buf.Write(acc.StorageRoot)
+	buf.Write(acc.CodeHash)
+	return buf.Bytes(), nil
+}
+
+// Helper: DecodeAccount reconstructs an Account struct from raw bytes
+func DecodeAccount(data []byte) (*Account, error) {
+	if len(data) < 64 {
 		return nil, fmt.Errorf("invalid account data length")
 	}
 
-	nonce := uint64(0)
-	if len(items[0]) > 0 {
-		nonce = new(big.Int).SetBytes(items[0]).Uint64()
-	}
-
-	balance := new(big.Int).SetBytes(items[1])
-	storageRoot := append([]byte(nil), items[2]...)
-	codeHash := append([]byte(nil), items[3]...)
-
-	if len(storageRoot) == 0 {
-		storageRoot = append([]byte(nil), EmptyRootHash...)
-	}
-	if len(codeHash) == 0 {
-		codeHash = append([]byte(nil), EmptyCodeHash...)
-	}
+	storageRoot := data[len(data)-64 : len(data)-32]
+	codeHash := data[len(data)-32:]
 
 	return &Account{
-		Nonce:       nonce,
-		Balance:     balance,
+		Nonce:       0,
+		Balance:     new(big.Int),
 		StorageRoot: storageRoot,
 		CodeHash:    codeHash,
 	}, nil
