@@ -1,8 +1,7 @@
-
 package state
 
 import (
-	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math/big"
 )
@@ -148,29 +147,52 @@ func (s *StateDB) SetState(addr, key, value []byte) error {
 	return s.SetAccount(addr, acc)
 }
 
-// Helper: EncodeAccount serializes an Account struct into raw bytes
-func EncodeAccount(acc *Account) ([]byte, error) {
-	var buf bytes.Buffer
-	buf.Write(big.NewInt(int64(acc.Nonce)).Bytes())
-	buf.Write(acc.Balance.Bytes())
-	buf.Write(acc.StorageRoot)
-	buf.Write(acc.CodeHash)
-	return buf.Bytes(), nil
-}
+const accountEncodedSize = 8 + 32 + 32 + 32
 
-// Helper: DecodeAccount reconstructs an Account struct from raw bytes
-func DecodeAccount(data []byte) (*Account, error) {
-	if len(data) < 64 {
-		return nil, fmt.Errorf("invalid account data length")
+// EncodeAccount serializes an account using fixed-width fields:
+// nonce (8 bytes), balance (32 bytes), storage root (32 bytes), code hash (32 bytes).
+func EncodeAccount(acc *Account) ([]byte, error) {
+	if acc == nil {
+		return nil, fmt.Errorf("cannot encode nil account")
 	}
 
-	storageRoot := data[len(data)-64 : len(data)-32]
-	codeHash := data[len(data)-32:]
+	enc := make([]byte, accountEncodedSize)
+
+	// Nonce: bytes 0–7
+	binary.BigEndian.PutUint64(enc[:8], acc.Nonce)
+
+	// Balance: bytes 8–39, left-padded to 32 bytes.
+	if acc.Balance != nil {
+		balanceBytes := acc.Balance.Bytes()
+		if len(balanceBytes) > 32 {
+			return nil, fmt.Errorf("balance exceeds 256 bits")
+		}
+		copy(enc[40-len(balanceBytes):40], balanceBytes)
+	}
+
+	// Storage root: bytes 40–71
+	copy(enc[40:72], acc.StorageRoot)
+
+	// Code hash: bytes 72–103
+	copy(enc[72:104], acc.CodeHash)
+
+	return enc, nil
+}
+
+// DecodeAccount reconstructs an Account from its fixed-width encoding.
+func DecodeAccount(data []byte) (*Account, error) {
+	if len(data) != accountEncodedSize {
+		return nil, fmt.Errorf(
+			"invalid account data length: got %d, want %d",
+			len(data),
+			accountEncodedSize,
+		)
+	}
 
 	return &Account{
-		Nonce:       0,
-		Balance:     new(big.Int),
-		StorageRoot: storageRoot,
-		CodeHash:    codeHash,
+		Nonce:       binary.BigEndian.Uint64(data[:8]),
+		Balance:     new(big.Int).SetBytes(data[8:40]),
+		StorageRoot: append([]byte(nil), data[40:72]...),
+		CodeHash:    append([]byte(nil), data[72:104]...),
 	}, nil
 }
