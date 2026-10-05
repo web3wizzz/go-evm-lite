@@ -10,7 +10,7 @@ type ExecutionContext struct {
 	Memory       *Memory
 	GasRemaining uint64
 	PC           uint64
-	// Stack *Stack // wire this up to whatever you named your Day 16 stack type.
+	Stack        *Stack
 }
 
 // NewExecutionContext creates a context with empty memory and the given
@@ -18,6 +18,7 @@ type ExecutionContext struct {
 func NewExecutionContext(gasLimit uint64) *ExecutionContext {
 	return &ExecutionContext{
 		Memory:       NewMemory(),
+		Stack:        NewStack(),
 		GasRemaining: gasLimit,
 		PC:           0,
 	}
