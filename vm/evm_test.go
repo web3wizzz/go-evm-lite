@@ -79,7 +79,6 @@ func TestEVMPush32(t *testing.T) {
 func TestEVMPushPadsMissingBytesWithZero(t *testing.T) {
 	evm := NewEVM(100)
 
-	// PUSH2 has only one provided byte, so 0x01 becomes 0x0100.
 	if err := evm.Run([]byte{PUSH1 + 1, 0x01}); err != nil {
 		t.Fatal(err)
 	}
@@ -91,5 +90,92 @@ func TestEVMPushPadsMissingBytesWithZero(t *testing.T) {
 
 	if value.Cmp(big.NewInt(0x100)) != 0 {
 		t.Fatalf("expected 256, got %s", value)
+	}
+}
+
+func TestEVMPop(t *testing.T) {
+	evm := NewEVM(100)
+
+	code := []byte{
+		PUSH1, 0x2a,
+		POP,
+		STOP,
+	}
+
+	if err := evm.Run(code); err != nil {
+		t.Fatal(err)
+	}
+
+	if evm.Context.Stack.Len() != 0 {
+		t.Fatalf("expected empty stack, got %d item(s)", evm.Context.Stack.Len())
+	}
+}
+
+func TestEVMPopUnderflow(t *testing.T) {
+	evm := NewEVM(100)
+
+	if err := evm.Run([]byte{POP}); err == nil {
+		t.Fatal("expected POP on empty stack to fail")
+	}
+}
+
+func TestEVMDup1(t *testing.T) {
+	evm := NewEVM(100)
+
+	code := []byte{
+		PUSH1, 0x2a,
+		DUP1,
+		STOP,
+	}
+
+	if err := evm.Run(code); err != nil {
+		t.Fatal(err)
+	}
+
+	top, err := evm.Context.Stack.Pop()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	below, err := evm.Context.Stack.Pop()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if top.Cmp(big.NewInt(42)) != 0 || below.Cmp(big.NewInt(42)) != 0 {
+		t.Fatalf("expected two copies of 42, got %s and %s", top, below)
+	}
+}
+
+func TestEVMDup2(t *testing.T) {
+	evm := NewEVM(100)
+
+	code := []byte{
+		PUSH1, 0x11,
+		PUSH1, 0x22,
+		DUP1 + 1,
+		STOP,
+	}
+
+	if err := evm.Run(code); err != nil {
+		t.Fatal(err)
+	}
+
+	first, _ := evm.Context.Stack.Pop()
+	second, _ := evm.Context.Stack.Pop()
+	third, _ := evm.Context.Stack.Pop()
+
+	if first.Cmp(big.NewInt(0x11)) != 0 ||
+		second.Cmp(big.NewInt(0x22)) != 0 ||
+		third.Cmp(big.NewInt(0x11)) != 0 {
+		t.Fatal("DUP2 did not duplicate the second stack item")
+	}
+}
+
+func TestEVMDupUnderflow(t *testing.T) {
+	evm := NewEVM(100)
+
+	if err := evm.Run([]byte{DUP1}); err == nil {
+		t.Fatal("expected DUP1 on an empty stack to fail")
 	}
 }

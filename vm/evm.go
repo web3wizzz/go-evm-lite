@@ -7,8 +7,11 @@ import (
 
 const (
 	STOP   byte = 0x00
+	POP    byte = 0x50
 	PUSH1  byte = 0x60
 	PUSH32 byte = 0x7f
+	DUP1   byte = 0x80
+	DUP16  byte = 0x8f
 )
 
 type EVM struct {
@@ -35,11 +38,16 @@ func (e *EVM) Run(code []byte) error {
 		case opcode == STOP:
 			return nil
 
+		case opcode == POP:
+			if _, err := e.Context.Stack.Pop(); err != nil {
+				return fmt.Errorf("vm: POP failed: %w", err)
+			}
+
 		case opcode >= PUSH1 && opcode <= PUSH32:
 			size := uint64(opcode-PUSH1) + 1
 			data := make([]byte, size)
 
-			// Copy immediate bytes; missing bytes remain zero.
+			// Missing PUSH bytes are treated as zero.
 			if e.Context.PC < uint64(len(e.Code)) {
 				available := uint64(len(e.Code)) - e.Context.PC
 				if available > size {
@@ -53,6 +61,18 @@ func (e *EVM) Run(code []byte) error {
 
 			if err := e.Context.Stack.Push(new(big.Int).SetBytes(data)); err != nil {
 				return fmt.Errorf("vm: PUSH%d failed: %w", size, err)
+			}
+
+		case opcode >= DUP1 && opcode <= DUP16:
+			depth := int(opcode-DUP1) + 1
+
+			value, err := e.Context.Stack.Peek(depth - 1)
+			if err != nil {
+				return fmt.Errorf("vm: DUP%d failed: %w", depth, err)
+			}
+
+			if err := e.Context.Stack.Push(value); err != nil {
+				return fmt.Errorf("vm: DUP%d failed: %w", depth, err)
 			}
 
 		default:
