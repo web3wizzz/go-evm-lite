@@ -179,3 +179,59 @@ func TestEVMDupUnderflow(t *testing.T) {
 		t.Fatal("expected DUP1 on an empty stack to fail")
 	}
 }
+func TestEVMSwap1(t *testing.T) {
+	evm := NewEVM(100)
+
+	code := []byte{
+		PUSH1, 0x11,
+		PUSH1, 0x22,
+		SWAP1,
+		STOP,
+	}
+
+	if err := evm.Run(code); err != nil {
+		t.Fatal(err)
+	}
+
+	top, _ := evm.Context.Stack.Pop()
+	below, _ := evm.Context.Stack.Pop()
+
+	if top.Cmp(big.NewInt(0x11)) != 0 ||
+		below.Cmp(big.NewInt(0x22)) != 0 {
+		t.Fatal("SWAP1 did not exchange the top two items")
+	}
+}
+
+func TestEVMSwap2(t *testing.T) {
+	evm := NewEVM(100)
+
+	code := []byte{
+		PUSH1, 0x11,
+		PUSH1, 0x22,
+		PUSH1, 0x33,
+		SWAP1 + 1,
+		STOP,
+	}
+
+	if err := evm.Run(code); err != nil {
+		t.Fatal(err)
+	}
+
+	first, _ := evm.Context.Stack.Pop()
+	second, _ := evm.Context.Stack.Pop()
+	third, _ := evm.Context.Stack.Pop()
+
+	if first.Cmp(big.NewInt(0x11)) != 0 ||
+		second.Cmp(big.NewInt(0x22)) != 0 ||
+		third.Cmp(big.NewInt(0x33)) != 0 {
+		t.Fatal("SWAP2 did not exchange the correct items")
+	}
+}
+
+func TestEVMSwapUnderflow(t *testing.T) {
+	evm := NewEVM(100)
+
+	if err := evm.Run([]byte{PUSH1, 0x01, SWAP1}); err == nil {
+		t.Fatal("expected SWAP1 with one stack item to fail")
+	}
+}

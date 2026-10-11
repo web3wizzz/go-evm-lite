@@ -12,6 +12,8 @@ const (
 	PUSH32 byte = 0x7f
 	DUP1   byte = 0x80
 	DUP16  byte = 0x8f
+	SWAP1  byte = 0x90
+	SWAP16 byte = 0x9f
 )
 
 type EVM struct {
@@ -74,6 +76,12 @@ func (e *EVM) Run(code []byte) error {
 			if err := e.Context.Stack.Push(value); err != nil {
 				return fmt.Errorf("vm: DUP%d failed: %w", depth, err)
 			}
+case opcode >= SWAP1 && opcode <= SWAP16:
+	depth := int(opcode-SWAP1) + 1
+
+	if err := e.Context.Stack.Swap(depth); err != nil {
+		return fmt.Errorf("vm: SWAP%d failed: %w", depth, err)
+	}
 
 		default:
 			return fmt.Errorf(

@@ -64,3 +64,18 @@ func (s *Stack) Peek(n int) (*big.Int, error) {
 func (s *Stack) Len() int {
 	return len(s.items)
 }
+// Swap exchanges the top stack item with the item at the given depth.
+// Swap(1) swaps the top item with the item directly below it.
+func (s *Stack) Swap(depth int) error {
+	if depth < 1 || depth >= len(s.items) {
+		return ErrStackUnderflow
+	}
+
+	topIndex := len(s.items) - 1
+	otherIndex := topIndex - depth
+
+	s.items[topIndex], s.items[otherIndex] =
+		s.items[otherIndex], s.items[topIndex]
+
+	return nil
+}
