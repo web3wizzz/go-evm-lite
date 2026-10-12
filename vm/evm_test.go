@@ -235,3 +235,38 @@ func TestEVMSwapUnderflow(t *testing.T) {
 		t.Fatal("expected SWAP1 with one stack item to fail")
 	}
 }
+
+func TestEVMArithmetic(t *testing.T) {
+	tests := []struct {
+		name     string
+		code     []byte
+		expected int64
+	}{
+		{"ADD", []byte{PUSH1, 3, PUSH1, 5, ADD, STOP}, 8},
+		{"SUB", []byte{PUSH1, 3, PUSH1, 5, SUB, STOP}, 2},
+		{"MUL", []byte{PUSH1, 3, PUSH1, 5, MUL, STOP}, 15},
+		{"DIV", []byte{PUSH1, 3, PUSH1, 5, DIV, STOP}, 1},
+		{"MOD", []byte{PUSH1, 3, PUSH1, 5, MOD, STOP}, 2},
+		{"DIV by zero", []byte{PUSH1, 0, PUSH1, 5, DIV, STOP}, 0},
+		{"MOD by zero", []byte{PUSH1, 0, PUSH1, 5, MOD, STOP}, 0},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			evm := NewEVM(100)
+
+			if err := evm.Run(test.code); err != nil {
+				t.Fatal(err)
+			}
+
+			value, err := evm.Context.Stack.Pop()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if value.Cmp(big.NewInt(test.expected)) != 0 {
+				t.Fatalf("expected %d, got %s", test.expected, value)
+			}
+		})
+	}
+}
