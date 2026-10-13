@@ -270,3 +270,38 @@ func TestEVMArithmetic(t *testing.T) {
 		})
 	}
 }
+
+func TestEVMComparisons(t *testing.T) {
+	tests := []struct {
+		name     string
+		code     []byte
+		expected int64
+	}{
+		{"LT true", []byte{PUSH1, 5, PUSH1, 3, LT, STOP}, 1},
+		{"LT false", []byte{PUSH1, 3, PUSH1, 5, LT, STOP}, 0},
+		{"GT true", []byte{PUSH1, 3, PUSH1, 5, GT, STOP}, 1},
+		{"EQ true", []byte{PUSH1, 7, PUSH1, 7, EQ, STOP}, 1},
+		{"EQ false", []byte{PUSH1, 7, PUSH1, 8, EQ, STOP}, 0},
+		{"ISZERO true", []byte{PUSH1, 0, ISZERO, STOP}, 1},
+		{"ISZERO false", []byte{PUSH1, 9, ISZERO, STOP}, 0},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			evm := NewEVM(100)
+
+			if err := evm.Run(test.code); err != nil {
+				t.Fatal(err)
+			}
+
+			value, err := evm.Context.Stack.Pop()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if value.Cmp(big.NewInt(test.expected)) != 0 {
+				t.Fatalf("expected %d, got %s", test.expected, value)
+			}
+		})
+	}
+}
