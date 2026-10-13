@@ -14,7 +14,6 @@ A lightweight, educational Ethereum Virtual Machine built from scratch in Go.
 - [Feature Comparison](#feature-comparison)
 - [Getting Started](#getting-started)
 - [Usage Examples](#usage-examples)
-- [Project Roadmap](#project-roadmap)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -256,7 +255,7 @@ Gas prevents infinite loops and resource exhaustion. If `gasRemaining < 0`, exec
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/go-evm-lite.git
+git clone https://github.com/web3wizzz/go-evm-lite.git
 cd go-evm-lite
 
 # Download dependencies
@@ -396,46 +395,6 @@ stateDB.SetState(contractAddr, key, value)
 retrieved := stateDB.GetState(contractAddr, key)
 println("Stored value:", retrieved.Hex())
 ```
-
----
-
-## Project Roadmap
-
-### Week 1-2: Foundation
-- [x] Account model and state structure
-- [x] Stack and memory implementations
-- [x] Basic opcodes (arithmetic, logical)
-- [ ] Transaction model and execution context
-
-### Week 3-4: Core Execution
-- [ ] Full opcode set (stack, memory, storage)
-- [ ] Gas metering and cost calculation
-- [ ] Program counter and control flow
-- [ ] Exception handling
-
-### Week 5-6: State Management
-- [ ] Merkle Patricia Trie implementation
-- [ ] StateDB CRUD operations
-- [ ] Account creation and code deployment
-- [ ] Storage state transitions
-
-### Week 7-8: Advanced Features
-- [ ] Contract-to-contract calls (CALL, DELEGATECALL)
-- [ ] Contract creation (CREATE)
-- [ ] Revert semantics and atomicity
-- [ ] Event logging (optional)
-
-### Week 9-10: Testing & Optimization
-- [ ] Comprehensive test suite
-- [ ] Integration with Ethereum test vectors
-- [ ] Performance profiling and optimization
-- [ ] Bytecode validation
-
-### Week 11-12: Documentation & Polish
-- [ ] Complete API documentation
-- [ ] Tutorial examples and guides
-- [ ] Performance benchmarks
-- [ ] Release preparation
 
 ---
 
