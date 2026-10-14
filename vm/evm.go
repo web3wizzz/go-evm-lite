@@ -16,24 +16,27 @@ const (
 	SMOD       byte = 0x07
 	EXP        byte = 0x0a
 	SIGNEXTEND byte = 0x0b
-
-	LT     byte = 0x10
-	GT     byte = 0x11
-	SLT    byte = 0x12
-	SGT    byte = 0x13
-	EQ     byte = 0x14
-	ISZERO byte = 0x15
-
-	POP byte = 0x50
-
-	PUSH1  byte = 0x60
-	PUSH32 byte = 0x7f
-
-	DUP1  byte = 0x80
-	DUP16 byte = 0x8f
-
-	SWAP1  byte = 0x90
-	SWAP16 byte = 0x9f
+	LT         byte = 0x10
+	GT         byte = 0x11
+	SLT        byte = 0x12
+	SGT        byte = 0x13
+	EQ         byte = 0x14
+	ISZERO     byte = 0x15
+	POP        byte = 0x50
+	PUSH1      byte = 0x60
+	PUSH32     byte = 0x7f
+	DUP1       byte = 0x80
+	DUP16      byte = 0x8f
+	SWAP1      byte = 0x90
+	SWAP16     byte = 0x9f
+	AND        byte = 0x16
+	OR         byte = 0x17
+	XOR        byte = 0x18
+	NOT        byte = 0x19
+	BYTE       byte = 0x1a
+	SHL        byte = 0x1b
+	SHR        byte = 0x1c
+	SAR        byte = 0x1d
 )
 
 type EVM struct {
@@ -293,6 +296,52 @@ func (e *EVM) Run(code []byte) error {
 
 		case opcode == ISZERO:
 			if err := e.isZero(); err != nil {
+				return err
+			}
+
+		case opcode == AND:
+			if err := e.binaryOp("AND", func(a, b *big.Int) *big.Int {
+				return new(big.Int).And(a, b)
+			}); err != nil {
+				return err
+			}
+
+		case opcode == OR:
+			if err := e.binaryOp("OR", func(a, b *big.Int) *big.Int {
+				return new(big.Int).Or(a, b)
+			}); err != nil {
+				return err
+			}
+
+		case opcode == XOR:
+			if err := e.binaryOp("XOR", func(a, b *big.Int) *big.Int {
+				return new(big.Int).Xor(a, b)
+			}); err != nil {
+				return err
+			}
+
+		case opcode == NOT:
+			if err := e.bitwiseNot(); err != nil {
+				return err
+			}
+
+		case opcode == BYTE:
+			if err := e.byteOp(); err != nil {
+				return err
+			}
+
+		case opcode == SHL:
+			if err := e.shl(); err != nil {
+				return err
+			}
+
+		case opcode == SHR:
+			if err := e.shr(); err != nil {
+				return err
+			}
+
+		case opcode == SAR:
+			if err := e.sar(); err != nil {
 				return err
 			}
 
