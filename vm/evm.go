@@ -37,6 +37,9 @@ const (
 	SHL        byte = 0x1b
 	SHR        byte = 0x1c
 	SAR        byte = 0x1d
+	MLOAD      byte = 0x51
+	MSTORE     byte = 0x52
+	MSTORE8    byte = 0x53
 )
 
 type EVM struct {
@@ -163,6 +166,96 @@ func (e *EVM) signExtend() error {
 	}
 
 	return e.Context.Stack.Push(result)
+}
+
+const memoryOpcodeGas uint64 = 3
+
+func (e *EVM) popMemoryOffset(op string) (uint64, error) {
+	value, err := e.Context.Stack.Pop()
+	if err != nil {
+		return 0, fmt.Errorf("vm: %s failed: %w", op, err)
+	}
+
+	if !value.IsUint64() {
+		return 0, fmt.Errorf("vm: %s offset does not fit uint64", op)
+	}
+
+	return value.Uint64(), nil
+}
+
+func wordToBytes(value *big.Int) []byte {
+	word := make([]byte, 32)
+	valueBytes := value.Bytes()
+
+	copy(word[32-len(valueBytes):], valueBytes)
+
+	return word
+}
+
+func (e *EVM) mload() error {
+	if err := e.Context.useGas(memoryOpcodeGas); err != nil {
+		return fmt.Errorf("vm: MLOAD failed: %w", err)
+	}
+
+	offset, err := e.popMemoryOffset("MLOAD")
+	if err != nil {
+		return err
+	}
+
+	word, err := e.Context.MLoad(offset)
+	if err != nil {
+		return fmt.Errorf("vm: MLOAD failed: %w", err)
+	}
+
+	if err := e.Context.Stack.Push(new(big.Int).SetBytes(word)); err != nil {
+		return fmt.Errorf("vm: MLOAD failed: %w", err)
+	}
+
+	return nil
+}
+
+func (e *EVM) mstore() error {
+	if err := e.Context.useGas(memoryOpcodeGas); err != nil {
+		return fmt.Errorf("vm: MSTORE failed: %w", err)
+	}
+
+	offset, err := e.popMemoryOffset("MSTORE")
+	if err != nil {
+		return err
+	}
+
+	value, err := e.Context.Stack.Pop()
+	if err != nil {
+		return fmt.Errorf("vm: MSTORE failed: %w", err)
+	}
+
+	if err := e.Context.MStore(offset, wordToBytes(value)); err != nil {
+		return fmt.Errorf("vm: MSTORE failed: %w", err)
+	}
+
+	return nil
+}
+
+func (e *EVM) mstore8() error {
+	if err := e.Context.useGas(memoryOpcodeGas); err != nil {
+		return fmt.Errorf("vm: MSTORE8 failed: %w", err)
+	}
+
+	offset, err := e.popMemoryOffset("MSTORE8")
+	if err != nil {
+		return err
+	}
+
+	value, err := e.Context.Stack.Pop()
+	if err != nil {
+		return fmt.Errorf("vm: MSTORE8 failed: %w", err)
+	}
+
+	if err := e.Context.MStore8(offset, byte(value.Uint64())); err != nil {
+		return fmt.Errorf("vm: MSTORE8 failed: %w", err)
+	}
+
+	return nil
 }
 
 // Run executes bytecode until STOP, an invalid opcode, or the end of the code.
@@ -310,6 +403,21 @@ func (e *EVM) Run(code []byte) error {
 			if err := e.binaryOp("OR", func(a, b *big.Int) *big.Int {
 				return new(big.Int).Or(a, b)
 			}); err != nil {
+				return err
+			}
+
+		case opcode == MLOAD:
+			if err := e.mload(); err != nil {
+				return err
+			}
+
+		case opcode == MSTORE:
+			if err := e.mstore(); err != nil {
+				return err
+			}
+
+		case opcode == MSTORE8:
+			if err := e.mstore8(); err != nil {
 				return err
 			}
 
