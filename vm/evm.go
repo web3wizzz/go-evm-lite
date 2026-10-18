@@ -18,37 +18,44 @@ const (
 	SMOD       byte = 0x07
 	EXP        byte = 0x0a
 	SIGNEXTEND byte = 0x0b
-
-	LT     byte = 0x10
-	GT     byte = 0x11
-	SLT    byte = 0x12
-	SGT    byte = 0x13
-	EQ     byte = 0x14
-	ISZERO byte = 0x15
-	AND    byte = 0x16
-	OR     byte = 0x17
-	XOR    byte = 0x18
-	NOT    byte = 0x19
-	BYTE   byte = 0x1a
-	SHL    byte = 0x1b
-	SHR    byte = 0x1c
-	SAR    byte = 0x1d
-
-	POP     byte = 0x50
-	MLOAD   byte = 0x51
-	MSTORE  byte = 0x52
-	MSTORE8 byte = 0x53
-	SLOAD   byte = 0x54
-	SSTORE  byte = 0x55
-
-	PUSH1  byte = 0x60
-	PUSH32 byte = 0x7f
+	LT         byte = 0x10
+	GT         byte = 0x11
+	SLT        byte = 0x12
+	SGT        byte = 0x13
+	EQ         byte = 0x14
+	ISZERO     byte = 0x15
+	AND        byte = 0x16
+	OR         byte = 0x17
+	XOR        byte = 0x18
+	NOT        byte = 0x19
+	BYTE       byte = 0x1a
+	SHL        byte = 0x1b
+	SHR        byte = 0x1c
+	SAR        byte = 0x1d
+	POP        byte = 0x50
+	MLOAD      byte = 0x51
+	MSTORE     byte = 0x52
+	MSTORE8    byte = 0x53
+	SLOAD      byte = 0x54
+	SSTORE     byte = 0x55
+	PUSH1      byte = 0x60
+	PUSH32     byte = 0x7f
 
 	DUP1  byte = 0x80
 	DUP16 byte = 0x8f
 
 	SWAP1  byte = 0x90
 	SWAP16 byte = 0x9f
+
+	JUMP     byte = 0x56
+	JUMPI    byte = 0x57
+	PC       byte = 0x58
+	JUMPDEST byte = 0x5b
+
+	jumpGas     uint64 = 8
+	jumpiGas    uint64 = 10
+	pcGas       uint64 = 2
+	jumpDestGas uint64 = 1
 )
 
 type EVM struct {
@@ -328,6 +335,80 @@ func (e *EVM) sstore() error {
 	return nil
 }
 
+func (e *EVM) isValidJumpDest(destination uint64) bool {
+	pc := uint64(0)
+
+	for pc < uint64(len(e.Code)) {
+		if pc == destination {
+			return e.Code[pc] == JUMPDEST
+		}
+
+		opcode := e.Code[pc]
+		pc++
+
+		if opcode >= PUSH1 && opcode <= PUSH32 {
+			pc += uint64(opcode-PUSH1) + 1
+		}
+	}
+
+	return false
+}
+
+func (e *EVM) jump() error {
+	if err := e.Context.useGas(jumpGas); err != nil {
+		return fmt.Errorf("vm: JUMP failed: %w", err)
+	}
+
+	destination, err := e.Context.Stack.Pop()
+	if err != nil {
+		return fmt.Errorf("vm: JUMP failed: %w", err)
+	}
+
+	if !destination.IsUint64() || !e.isValidJumpDest(destination.Uint64()) {
+		return fmt.Errorf("vm: invalid jump destination %s", destination)
+	}
+
+	e.Context.PC = destination.Uint64()
+	return nil
+}
+
+func (e *EVM) jumpi() error {
+	if err := e.Context.useGas(jumpiGas); err != nil {
+		return fmt.Errorf("vm: JUMPI failed: %w", err)
+	}
+
+	destination, err := e.Context.Stack.Pop()
+	if err != nil {
+		return fmt.Errorf("vm: JUMPI failed: %w", err)
+	}
+
+	condition, err := e.Context.Stack.Pop()
+	if err != nil {
+		return fmt.Errorf("vm: JUMPI failed: %w", err)
+	}
+
+	if condition.Sign() == 0 {
+		return nil
+	}
+
+	if !destination.IsUint64() || !e.isValidJumpDest(destination.Uint64()) {
+		return fmt.Errorf("vm: invalid jump destination %s", destination)
+	}
+
+	e.Context.PC = destination.Uint64()
+	return nil
+}
+
+func (e *EVM) pc() error {
+	if err := e.Context.useGas(pcGas); err != nil {
+		return fmt.Errorf("vm: PC failed: %w", err)
+	}
+
+	return e.Context.Stack.Push(
+		new(big.Int).SetUint64(e.Context.PC - 1),
+	)
+}
+
 func (e *EVM) Run(code []byte) error {
 	e.Code = append([]byte(nil), code...)
 	e.Context.PC = 0
@@ -573,6 +654,26 @@ func (e *EVM) Run(code []byte) error {
 
 			if err := e.Context.Stack.Swap(depth); err != nil {
 				return fmt.Errorf("vm: SWAP%d failed: %w", depth, err)
+			}
+
+		case opcode == JUMP:
+			if err := e.jump(); err != nil {
+				return err
+			}
+
+		case opcode == JUMPI:
+			if err := e.jumpi(); err != nil {
+				return err
+			}
+
+		case opcode == PC:
+			if err := e.pc(); err != nil {
+				return err
+			}
+
+		case opcode == JUMPDEST:
+			if err := e.Context.useGas(jumpDestGas); err != nil {
+				return fmt.Errorf("vm: JUMPDEST failed: %w", err)
 			}
 
 		default:
