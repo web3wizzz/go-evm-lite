@@ -3,6 +3,8 @@ package vm
 import (
 	"fmt"
 	"math/big"
+
+	"evm-lite/state"
 )
 
 const (
@@ -16,47 +18,75 @@ const (
 	SMOD       byte = 0x07
 	EXP        byte = 0x0a
 	SIGNEXTEND byte = 0x0b
-	LT         byte = 0x10
-	GT         byte = 0x11
-	SLT        byte = 0x12
-	SGT        byte = 0x13
-	EQ         byte = 0x14
-	ISZERO     byte = 0x15
-	POP        byte = 0x50
-	PUSH1      byte = 0x60
-	PUSH32     byte = 0x7f
-	DUP1       byte = 0x80
-	DUP16      byte = 0x8f
-	SWAP1      byte = 0x90
-	SWAP16     byte = 0x9f
-	AND        byte = 0x16
-	OR         byte = 0x17
-	XOR        byte = 0x18
-	NOT        byte = 0x19
-	BYTE       byte = 0x1a
-	SHL        byte = 0x1b
-	SHR        byte = 0x1c
-	SAR        byte = 0x1d
-	MLOAD      byte = 0x51
-	MSTORE     byte = 0x52
-	MSTORE8    byte = 0x53
+
+	LT     byte = 0x10
+	GT     byte = 0x11
+	SLT    byte = 0x12
+	SGT    byte = 0x13
+	EQ     byte = 0x14
+	ISZERO byte = 0x15
+	AND    byte = 0x16
+	OR     byte = 0x17
+	XOR    byte = 0x18
+	NOT    byte = 0x19
+	BYTE   byte = 0x1a
+	SHL    byte = 0x1b
+	SHR    byte = 0x1c
+	SAR    byte = 0x1d
+
+	POP     byte = 0x50
+	MLOAD   byte = 0x51
+	MSTORE  byte = 0x52
+	MSTORE8 byte = 0x53
+	SLOAD   byte = 0x54
+	SSTORE  byte = 0x55
+
+	PUSH1  byte = 0x60
+	PUSH32 byte = 0x7f
+
+	DUP1  byte = 0x80
+	DUP16 byte = 0x8f
+
+	SWAP1  byte = 0x90
+	SWAP16 byte = 0x9f
 )
 
 type EVM struct {
-	Context *ExecutionContext
-	Code    []byte
+	Context         *ExecutionContext
+	Code            []byte
+	State           *state.StateDB
+	ContractAddress [20]byte
 }
 
 func NewEVM(gasLimit uint64) *EVM {
+	return NewEVMWithState(gasLimit, state.NewStateDB(), [20]byte{})
+}
+
+func NewEVMWithState(
+	gasLimit uint64,
+	stateDB *state.StateDB,
+	contractAddress [20]byte,
+) *EVM {
+	if stateDB == nil {
+		stateDB = state.NewStateDB()
+	}
+
 	return &EVM{
-		Context: NewExecutionContext(gasLimit),
+		Context:         NewExecutionContext(gasLimit),
+		State:           stateDB,
+		ContractAddress: contractAddress,
 	}
 }
 
 var wordModulus = new(big.Int).Lsh(big.NewInt(1), 256)
 var signedBoundary = new(big.Int).Lsh(big.NewInt(1), 255)
 
-// signedWord converts an unsigned 256-bit EVM word to its signed form.
+const (
+	memoryOpcodeGas uint64 = 3
+	sloadGas        uint64 = 100
+	sstoreGas       uint64 = 20_000
+)
+
 func signedWord(value *big.Int) *big.Int {
 	if value.Cmp(signedBoundary) >= 0 {
 		return new(big.Int).Sub(value, wordModulus)
@@ -149,7 +179,6 @@ func (e *EVM) signExtend() error {
 	}
 
 	bits := uint(byteIndex.Uint64()*8 + 8)
-
 	mask := new(big.Int).Sub(
 		new(big.Int).Lsh(big.NewInt(1), bits),
 		big.NewInt(1),
@@ -168,8 +197,6 @@ func (e *EVM) signExtend() error {
 	return e.Context.Stack.Push(result)
 }
 
-const memoryOpcodeGas uint64 = 3
-
 func (e *EVM) popMemoryOffset(op string) (uint64, error) {
 	value, err := e.Context.Stack.Pop()
 	if err != nil {
@@ -186,9 +213,7 @@ func (e *EVM) popMemoryOffset(op string) (uint64, error) {
 func wordToBytes(value *big.Int) []byte {
 	word := make([]byte, 32)
 	valueBytes := value.Bytes()
-
 	copy(word[32-len(valueBytes):], valueBytes)
-
 	return word
 }
 
@@ -258,7 +283,51 @@ func (e *EVM) mstore8() error {
 	return nil
 }
 
-// Run executes bytecode until STOP, an invalid opcode, or the end of the code.
+func (e *EVM) sload() error {
+	if err := e.Context.useGas(sloadGas); err != nil {
+		return fmt.Errorf("vm: SLOAD failed: %w", err)
+	}
+
+	key, err := e.Context.Stack.Pop()
+	if err != nil {
+		return fmt.Errorf("vm: SLOAD failed: %w", err)
+	}
+
+	value := e.State.GetState(e.ContractAddress[:], wordToBytes(key))
+
+	if err := e.Context.Stack.Push(new(big.Int).SetBytes(value)); err != nil {
+		return fmt.Errorf("vm: SLOAD failed: %w", err)
+	}
+
+	return nil
+}
+
+func (e *EVM) sstore() error {
+	if err := e.Context.useGas(sstoreGas); err != nil {
+		return fmt.Errorf("vm: SSTORE failed: %w", err)
+	}
+
+	key, err := e.Context.Stack.Pop()
+	if err != nil {
+		return fmt.Errorf("vm: SSTORE failed: %w", err)
+	}
+
+	value, err := e.Context.Stack.Pop()
+	if err != nil {
+		return fmt.Errorf("vm: SSTORE failed: %w", err)
+	}
+
+	if err := e.State.SetState(
+		e.ContractAddress[:],
+		wordToBytes(key),
+		wordToBytes(value),
+	); err != nil {
+		return fmt.Errorf("vm: SSTORE failed: %w", err)
+	}
+
+	return nil
+}
+
 func (e *EVM) Run(code []byte) error {
 	e.Code = append([]byte(nil), code...)
 	e.Context.PC = 0
@@ -406,21 +475,6 @@ func (e *EVM) Run(code []byte) error {
 				return err
 			}
 
-		case opcode == MLOAD:
-			if err := e.mload(); err != nil {
-				return err
-			}
-
-		case opcode == MSTORE:
-			if err := e.mstore(); err != nil {
-				return err
-			}
-
-		case opcode == MSTORE8:
-			if err := e.mstore8(); err != nil {
-				return err
-			}
-
 		case opcode == XOR:
 			if err := e.binaryOp("XOR", func(a, b *big.Int) *big.Int {
 				return new(big.Int).Xor(a, b)
@@ -456,6 +510,31 @@ func (e *EVM) Run(code []byte) error {
 		case opcode == POP:
 			if _, err := e.Context.Stack.Pop(); err != nil {
 				return fmt.Errorf("vm: POP failed: %w", err)
+			}
+
+		case opcode == MLOAD:
+			if err := e.mload(); err != nil {
+				return err
+			}
+
+		case opcode == MSTORE:
+			if err := e.mstore(); err != nil {
+				return err
+			}
+
+		case opcode == MSTORE8:
+			if err := e.mstore8(); err != nil {
+				return err
+			}
+
+		case opcode == SLOAD:
+			if err := e.sload(); err != nil {
+				return err
+			}
+
+		case opcode == SSTORE:
+			if err := e.sstore(); err != nil {
+				return err
 			}
 
 		case opcode >= PUSH1 && opcode <= PUSH32:
