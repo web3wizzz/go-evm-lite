@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 
+	evmcrypto "evm-lite/crypto"
 	"evm-lite/state"
 )
 
@@ -18,44 +19,48 @@ const (
 	SMOD       byte = 0x07
 	EXP        byte = 0x0a
 	SIGNEXTEND byte = 0x0b
-	LT         byte = 0x10
-	GT         byte = 0x11
-	SLT        byte = 0x12
-	SGT        byte = 0x13
-	EQ         byte = 0x14
-	ISZERO     byte = 0x15
-	AND        byte = 0x16
-	OR         byte = 0x17
-	XOR        byte = 0x18
-	NOT        byte = 0x19
-	BYTE       byte = 0x1a
-	SHL        byte = 0x1b
-	SHR        byte = 0x1c
-	SAR        byte = 0x1d
-	POP        byte = 0x50
-	MLOAD      byte = 0x51
-	MSTORE     byte = 0x52
-	MSTORE8    byte = 0x53
-	SLOAD      byte = 0x54
-	SSTORE     byte = 0x55
-	PUSH1      byte = 0x60
-	PUSH32     byte = 0x7f
+
+	LT     byte = 0x10
+	GT     byte = 0x11
+	SLT    byte = 0x12
+	SGT    byte = 0x13
+	EQ     byte = 0x14
+	ISZERO byte = 0x15
+	AND    byte = 0x16
+	OR     byte = 0x17
+	XOR    byte = 0x18
+	NOT    byte = 0x19
+	BYTE   byte = 0x1a
+	SHL    byte = 0x1b
+	SHR    byte = 0x1c
+	SAR    byte = 0x1d
+
+	KECCAK256 byte = 0x20
+
+	ADDRESS   byte = 0x30
+	BALANCE   byte = 0x31
+	CALLER    byte = 0x33
+	CALLVALUE byte = 0x34
+
+	POP      byte = 0x50
+	MLOAD    byte = 0x51
+	MSTORE   byte = 0x52
+	MSTORE8  byte = 0x53
+	SLOAD    byte = 0x54
+	SSTORE   byte = 0x55
+	JUMP     byte = 0x56
+	JUMPI    byte = 0x57
+	PC       byte = 0x58
+	JUMPDEST byte = 0x5b
+
+	PUSH1  byte = 0x60
+	PUSH32 byte = 0x7f
 
 	DUP1  byte = 0x80
 	DUP16 byte = 0x8f
 
 	SWAP1  byte = 0x90
 	SWAP16 byte = 0x9f
-
-	JUMP     byte = 0x56
-	JUMPI    byte = 0x57
-	PC       byte = 0x58
-	JUMPDEST byte = 0x5b
-
-	jumpGas     uint64 = 8
-	jumpiGas    uint64 = 10
-	pcGas       uint64 = 2
-	jumpDestGas uint64 = 1
 )
 
 type EVM struct {
@@ -63,10 +68,18 @@ type EVM struct {
 	Code            []byte
 	State           *state.StateDB
 	ContractAddress [20]byte
+	CallerAddress   [20]byte
+	CallValue       *big.Int
 }
 
 func NewEVM(gasLimit uint64) *EVM {
-	return NewEVMWithState(gasLimit, state.NewStateDB(), [20]byte{})
+	return NewEVMWithEnvironment(
+		gasLimit,
+		state.NewStateDB(),
+		[20]byte{},
+		[20]byte{},
+		new(big.Int),
+	)
 }
 
 func NewEVMWithState(
@@ -74,14 +87,36 @@ func NewEVMWithState(
 	stateDB *state.StateDB,
 	contractAddress [20]byte,
 ) *EVM {
+	return NewEVMWithEnvironment(
+		gasLimit,
+		stateDB,
+		contractAddress,
+		[20]byte{},
+		new(big.Int),
+	)
+}
+
+func NewEVMWithEnvironment(
+	gasLimit uint64,
+	stateDB *state.StateDB,
+	contractAddress [20]byte,
+	callerAddress [20]byte,
+	callValue *big.Int,
+) *EVM {
 	if stateDB == nil {
 		stateDB = state.NewStateDB()
+	}
+
+	if callValue == nil {
+		callValue = new(big.Int)
 	}
 
 	return &EVM{
 		Context:         NewExecutionContext(gasLimit),
 		State:           stateDB,
 		ContractAddress: contractAddress,
+		CallerAddress:   callerAddress,
+		CallValue:       new(big.Int).Set(callValue),
 	}
 }
 
@@ -92,6 +127,16 @@ const (
 	memoryOpcodeGas uint64 = 3
 	sloadGas        uint64 = 100
 	sstoreGas       uint64 = 20_000
+	jumpGas         uint64 = 8
+	jumpiGas        uint64 = 10
+	pcGas           uint64 = 2
+	jumpDestGas     uint64 = 1
+	keccakBaseGas   uint64 = 30
+	keccakWordGas   uint64 = 6
+	addressGas      uint64 = 2
+	balanceGas      uint64 = 100
+	callerGas       uint64 = 2
+	callValueGas    uint64 = 2
 )
 
 func signedWord(value *big.Int) *big.Int {
@@ -222,6 +267,15 @@ func wordToBytes(value *big.Int) []byte {
 	valueBytes := value.Bytes()
 	copy(word[32-len(valueBytes):], valueBytes)
 	return word
+}
+
+func wordToAddress(word *big.Int) [20]byte {
+	wordBytes := wordToBytes(word)
+
+	var address [20]byte
+	copy(address[:], wordBytes[12:])
+
+	return address
 }
 
 func (e *EVM) mload() error {
@@ -409,6 +463,94 @@ func (e *EVM) pc() error {
 	)
 }
 
+func (e *EVM) keccak256() error {
+	offset, err := e.popMemoryOffset("KECCAK256")
+	if err != nil {
+		return err
+	}
+
+	sizeValue, err := e.Context.Stack.Pop()
+	if err != nil {
+		return fmt.Errorf("vm: KECCAK256 failed: %w", err)
+	}
+
+	if !sizeValue.IsUint64() {
+		return fmt.Errorf("vm: KECCAK256 size does not fit uint64")
+	}
+
+	size := sizeValue.Uint64()
+	words := size / 32
+	if size%32 != 0 {
+		words++
+	}
+
+	if words > (^uint64(0)-keccakBaseGas)/keccakWordGas {
+		return fmt.Errorf("vm: KECCAK256 gas calculation overflow")
+	}
+
+	gasCost := keccakBaseGas + words*keccakWordGas
+
+	if err := e.Context.useGas(gasCost); err != nil {
+		return fmt.Errorf("vm: KECCAK256 failed: %w", err)
+	}
+
+	if err := e.Context.ExpandMemory(offset, size); err != nil {
+		return fmt.Errorf("vm: KECCAK256 failed: %w", err)
+	}
+
+	hash := evmcrypto.Keccak256(e.Context.Memory.Get(offset, size))
+
+	if err := e.Context.Stack.Push(new(big.Int).SetBytes(hash)); err != nil {
+		return fmt.Errorf("vm: KECCAK256 failed: %w", err)
+	}
+
+	return nil
+}
+
+func (e *EVM) address() error {
+	if err := e.Context.useGas(addressGas); err != nil {
+		return fmt.Errorf("vm: ADDRESS failed: %w", err)
+	}
+
+	return e.Context.Stack.Push(
+		new(big.Int).SetBytes(e.ContractAddress[:]),
+	)
+}
+
+func (e *EVM) balance() error {
+	if err := e.Context.useGas(balanceGas); err != nil {
+		return fmt.Errorf("vm: BALANCE failed: %w", err)
+	}
+
+	addressWord, err := e.Context.Stack.Pop()
+	if err != nil {
+		return fmt.Errorf("vm: BALANCE failed: %w", err)
+	}
+
+	address := wordToAddress(addressWord)
+	value := e.State.GetBalance(address[:])
+
+	return e.Context.Stack.Push(new(big.Int).Set(value))
+}
+
+func (e *EVM) caller() error {
+	if err := e.Context.useGas(callerGas); err != nil {
+		return fmt.Errorf("vm: CALLER failed: %w", err)
+	}
+
+	return e.Context.Stack.Push(
+		new(big.Int).SetBytes(e.CallerAddress[:]),
+	)
+}
+
+func (e *EVM) callValue() error {
+	if err := e.Context.useGas(callValueGas); err != nil {
+		return fmt.Errorf("vm: CALLVALUE failed: %w", err)
+	}
+
+	return e.Context.Stack.Push(new(big.Int).Set(e.CallValue))
+}
+
 func (e *EVM) Run(code []byte) error {
 	e.Code = append([]byte(nil), code...)
 	e.Context.PC = 0
@@ -588,6 +730,31 @@ func (e *EVM) Run(code []byte) error {
 				return err
 			}
 
+		case opcode == KECCAK256:
+			if err := e.keccak256(); err != nil {
+				return err
+			}
+
+		case opcode == ADDRESS:
+			if err := e.address(); err != nil {
+				return err
+			}
+
+		case opcode == BALANCE:
+			if err := e.balance(); err != nil {
+				return err
+			}
+
+		case opcode == CALLER:
+			if err := e.caller(); err != nil {
+				return err
+			}
+
+		case opcode == CALLVALUE:
+			if err := e.callValue(); err != nil {
+				return err
+			}
+
 		case opcode == POP:
 			if _, err := e.Context.Stack.Pop(); err != nil {
 				return fmt.Errorf("vm: POP failed: %w", err)
@@ -616,6 +783,26 @@ func (e *EVM) Run(code []byte) error {
 		case opcode == SSTORE:
 			if err := e.sstore(); err != nil {
 				return err
+			}
+
+		case opcode == JUMP:
+			if err := e.jump(); err != nil {
+				return err
+			}
+
+		case opcode == JUMPI:
+			if err := e.jumpi(); err != nil {
+				return err
+			}
+
+		case opcode == PC:
+			if err := e.pc(); err != nil {
+				return err
+			}
+
+		case opcode == JUMPDEST:
+			if err := e.Context.useGas(jumpDestGas); err != nil {
+				return fmt.Errorf("vm: JUMPDEST failed: %w", err)
 			}
 
 		case opcode >= PUSH1 && opcode <= PUSH32:
@@ -654,26 +841,6 @@ func (e *EVM) Run(code []byte) error {
 
 			if err := e.Context.Stack.Swap(depth); err != nil {
 				return fmt.Errorf("vm: SWAP%d failed: %w", depth, err)
-			}
-
-		case opcode == JUMP:
-			if err := e.jump(); err != nil {
-				return err
-			}
-
-		case opcode == JUMPI:
-			if err := e.jumpi(); err != nil {
-				return err
-			}
-
-		case opcode == PC:
-			if err := e.pc(); err != nil {
-				return err
-			}
-
-		case opcode == JUMPDEST:
-			if err := e.Context.useGas(jumpDestGas); err != nil {
-				return fmt.Errorf("vm: JUMPDEST failed: %w", err)
 			}
 
 		default:
